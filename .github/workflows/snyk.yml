@@ -1,0 +1,53 @@
+name: DevSecOps - SCA Snyk
+
+on:
+  push:
+    branches: [master, develop]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  snyk-sca:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # package-lock.json di-ignore oleh Juice Shop, jadi dibuat dulu
+      - name: Generate lock file
+        run: npm install --package-lock-only --ignore-scripts --legacy-peer-deps
+
+      - name: Snyk SCA Scan (Pipeline Blocker)
+        id: snyk
+        uses: snyk/actions/node@master
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high --sarif-file-output=snyk.sarif
+
+      - name: Upload SARIF ke GitHub Security
+        if: always() && hashFiles('snyk.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: snyk.sarif
+
+      - name: Snyk Monitor
+        if: github.event_name == 'push'
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          command: monitor
+
+      - name: Gagalkan pipeline jika ada HIGH/CRITICAL
+        if: steps.snyk.outcome == 'failure'
+        run: exit 1
